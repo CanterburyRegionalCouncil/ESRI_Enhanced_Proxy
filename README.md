@@ -17,7 +17,7 @@ tile service
 url="http://arcgis.ecan.govt.nz/ArcGIS/rest/services/Imagery/MapServer"
 ``
 
-dynamic one to cahnge out to
+dynamic one to change out to
 ``
 alternate="http://arcgis.ecan.govt.nz/arcgis/rest/services/Dynamic/Imagery_Latest/MapServer"
 ``
