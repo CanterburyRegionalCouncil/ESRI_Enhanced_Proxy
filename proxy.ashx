@@ -239,10 +239,10 @@ public class proxy : IHttpHandler {
             requestUri = serverUrl.HostRedirect + new Uri(requestUri).PathAndQuery;
         }
         if (serverUrl.UseAppPoolIdentity)
-	    {
-		    credentials=CredentialCache.DefaultNetworkCredentials;
-	    }
-    	else if (serverUrl.Domain != null)
+        {
+            credentials=CredentialCache.DefaultNetworkCredentials;
+        }
+        else if (serverUrl.Domain != null)
         {
             credentials = new System.Net.NetworkCredential(serverUrl.Username, serverUrl.Password, serverUrl.Domain);
         }
@@ -282,179 +282,181 @@ public class proxy : IHttpHandler {
             }
         }
 
-        if (context.Request.Form["Web_Map_as_JSON"] != null)
+        var webmap = GetFormOrParamVariable(context.Request, "Web_Map_as_JSON");
+        if (!string.IsNullOrWhiteSpace(webmap))
         {
-            var webmap = context.Request.Form["Web_Map_as_JSON"];
-            if (webmap.Length > 0)
+            // Parse out any vars at end of url like wab=2.5 etc.
+            requestUri = requestUri.Split('&')[0];
+            // Parse webmap into JSON object
+            JObject jObject = JObject.Parse(webmap);
+
+            // Parse the operational layers
+            JToken operationalLayers = jObject["operationalLayers"];
+
+            // Set the current layer
+            JToken currentLayer = null;
+                
+            // Check for custom Parameters related to tiled map services to be injected if they are not already in the map definition
+            var tiledLayersText = GetFormOrParamVariable(context.Request, "tiledLayers");
+            var visibleLayersText = GetFormOrParamVariable(context.Request, "visibleLayers");
+            if (visibleLayersText != null && visibleLayersText.Length > 0 && tiledLayersText != null && tiledLayersText.Length > 0)
             {
-				// Parse out any vars at end of url like wab=2.5 etc.
-				requestUri = requestUri.Split('&')[0];
-                // Parse webmap into JSON object
-                JObject jObject = JObject.Parse(webmap);
+                // Data is delivered slightly differently between GET and POST requests
+                JArray tiledLayers = (context.Request.HttpMethod == "GET") ? (JArray)JObject.Parse(tiledLayersText)["operationalLayers"] : JArray.Parse(tiledLayersText);
+                JArray visibleLayers = (context.Request.HttpMethod == "GET") ? (JArray)JObject.Parse(visibleLayersText)["operationalLayers"] : JArray.Parse(visibleLayersText);
 
-                // Parse the operational layers
-                JToken operationalLayers = jObject["operationalLayers"];
-
-                // Set the current layer
-                JToken currentLayer = null;
-
-                // Check for custom Parameters related to tiled map services to be injected if they are not already in the map definition
-                var tiledLayersText = context.Request.Form["tiledLayers"];
-                var visibleLayersText = context.Request.Form["visibleLayers"];
-                if (visibleLayersText != null && visibleLayersText.Length > 0 && tiledLayersText != null && tiledLayersText.Length > 0)
+                foreach (var vlayer in visibleLayers)
                 {
-                    JArray tiledLayers = JArray.Parse(tiledLayersText);
-                    JArray visibleLayers = JArray.Parse(visibleLayersText);
-                    foreach (var vlayer in visibleLayers)
+                    // Get the layer id
+                    string layerid = vlayer.ToString();
+
+                    // Check if this layer is already in the operational layers collection
+                    var olayers = operationalLayers.Children();
+
+                    var olayer = (from o in operationalLayers.Children()
+                                  where (string)o["id"] == layerid
+                                  select o).FirstOrDefault();
+
+                    // Check if this value is a tiled map
+                    var tlayer = (from t in tiledLayers.Children()
+                                  where (string)t["id"] == layerid
+                                  select t).FirstOrDefault();
+
+                    if (tlayer != null && olayer == null)
                     {
-                        // Get the layer id
-                        string layerid = vlayer.ToString();
-
-                        // Check if this layer is already in the operational layers collection
-                        var olayers = operationalLayers.Children();
-
-                        var olayer = (from o in operationalLayers.Children()
-                                      where (string)o["id"] == layerid
-                                      select o).FirstOrDefault();
-
-                        // Check if this value is a tiled map
-                        var tlayer = (from t in tiledLayers.Children()
-                                      where (string)t["id"] == layerid
-                                      select t).FirstOrDefault();
-
-                        if (tlayer != null && olayer == null)
+                        // Inject the tiled layer back into the operational layers list                            
+                        olayer = tlayer.DeepClone();
+                        if (currentLayer == null)
                         {
-                            // Inject the tiled layer back into the operational layers list                            
-                            olayer = tlayer.DeepClone();
-                            if (currentLayer == null)
-                            {
-                                operationalLayers.FirstOrDefault().AddBeforeSelf(olayer);
-                            }
-                            else
-                            {
-                                currentLayer.AddAfterSelf(olayer);
-                            }
+                            operationalLayers.FirstOrDefault().AddBeforeSelf(olayer);
                         }
-
-                        // Update the current layer
-                        currentLayer = olayer;
-                    }
-                }
-
-                // Create list of remove layers
-                List<JToken> removeLayers = new List<JToken>();
-
-                foreach (var layer in operationalLayers)
-                {
-                    // Check for hidden layers
-                    string layertitle = string.Empty;
-                    if (layer["title"] != null)
-                    {
-                        layertitle = layer["title"].ToString();
-                    }
-
-                    if (layertitle.StartsWith("hiddenLayer_"))
-                    {
-                        removeLayers.Add(layer);
-                    }
-                    else
-                    {
-                        // Check if this is a feature layer and get the url if it is
-                        var layerurl = layer["url"];
-                        if (layerurl != null)
+                        else
                         {
-                            // Check if map export request is for 96 DPI - no need to substitute if this is the case as this will match the tile cahce
-
-
-                            // Check for layer substitution
-                            SubstituteUrl substitute = getSubstituteFromConfig(layerurl.ToString());
-                            if (substitute != null)
-                            {
-                                // Replace url reference with alternate from substitute object
-                                layerurl.Replace(JToken.FromObject(substitute.Alternate));
-
-                                // TO DO:  Bring in token details from substitute object (if any)
-                            }
-
-                            // Check for visible layers
-                            var visiblelayers = layer["visibleLayers"];
-                            if (visiblelayers != null)
-                            {
-                                // Check the length attribute
-                                List<int> ids = new List<int>();
-                                foreach (var l in visiblelayers)
-                                {
-                                    ids.Add(int.Parse(l.ToString()));
-                                }
-
-                                if (ids.Count == 0)
-                                {
-                                    // Remove this layer from the array
-                                    removeLayers.Add(layer);
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Check if the layer is a graphics layer
-                        if (layerurl == null)
-                        {
-                            List<JToken> graphics = new List<JToken>();
-                            // Check if this contains a feature collection
-                            if (layer["featureCollection"] != null)
-                            {
-                                var col = layer["featureCollection"];
-                                foreach (var lay in col["layers"])
-                                {
-                                    var fset = lay["featureSet"];
-                                    foreach (var feature in fset["features"])
-                                    {
-                                        graphics.Add(feature);
-                                    }
-                                }
-
-                                if (graphics.Count == 0)
-                                {
-                                    removeLayers.Add(layer);
-                                }
-                            }
+                            currentLayer.AddAfterSelf(olayer);
                         }
                     }
+
+                    // Update the current layer
+                    currentLayer = olayer;
+                }
+            }
+
+            // Create list of remove layers
+            List<JToken> removeLayers = new List<JToken>();
+
+            foreach (var layer in operationalLayers)
+            {
+                // Check for hidden layers
+                string layertitle = string.Empty;
+                if (layer["title"] != null)
+                {
+                    layertitle = layer["title"].ToString();
                 }
 
-                if (removeLayers.Count > 0)
+                if (layertitle.StartsWith("hiddenLayer_"))
                 {
-                    foreach (var layer in removeLayers)
-                    {
-                        layer.Remove();
-                    }
-                }
-
-                // Reset the webmap in the outgoing call
-                string jString = jObject.ToString(0, null);
-                string webmapjson = string.Empty;
-
-                // Check the length of the call - uri escape funtion has a max length of 65520 characters
-                if (jString.Length > 32766)
-                {
-                    List<string> segments = new List<string>();
-                    for (int index = 0; index < jString.Length; index += 32766)
-                    {
-                        segments.Add(jString.Substring(index, Math.Min(32766, jString.Length - index)));
-                    }
-
-                    foreach (var segment in segments)
-                    {
-                        webmapjson += Uri.EscapeDataString(segment);
-                    }
+                    removeLayers.Add(layer);
                 }
                 else
                 {
-                    webmapjson = Uri.EscapeDataString(jString);
+                    // Check if this is a feature layer and get the url if it is
+                    var layerurl = layer["url"];
+                    if (layerurl != null)
+                    {
+                        // Check if map export request is for 96 DPI - no need to substitute if this is the case as this will match the tile cahce
+
+
+                        // Check for layer substitution
+                        SubstituteUrl substitute = getSubstituteFromConfig(layerurl.ToString());
+                        if (substitute != null)
+                        {
+                            // Replace url reference with alternate from substitute object
+                            layerurl.Replace(JToken.FromObject(substitute.Alternate));
+
+                            // TO DO:  Bring in token details from substitute object (if any)
+                        }
+
+                        // Check for visible layers
+                        var visiblelayers = layer["visibleLayers"];
+                        if (visiblelayers != null)
+                        {
+                            // Check the length attribute
+                            List<int> ids = new List<int>();
+                            foreach (var l in visiblelayers)
+                            {
+                                ids.Add(int.Parse(l.ToString()));
+                            }
+
+                            if (ids.Count == 0)
+                            {
+                                // Remove this layer from the array
+                                removeLayers.Add(layer);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Check if the layer is a graphics layer
+                    if (layerurl == null)
+                    {
+                        List<JToken> graphics = new List<JToken>();
+                        // Check if this contains a feature collection
+                        if (layer["featureCollection"] != null)
+                        {
+                            var col = layer["featureCollection"];
+                            foreach (var lay in col["layers"])
+                            {
+                                var fset = lay["featureSet"];
+                                foreach (var feature in fset["features"])
+                                {
+                                    graphics.Add(feature);
+                                }
+                            }
+
+                            if (graphics.Count == 0)
+                            {
+                                removeLayers.Add(layer);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (removeLayers.Count > 0)
+            {
+                foreach (var layer in removeLayers)
+                {
+                    layer.Remove();
+                }
+            }
+
+            // Reset the webmap in the outgoing call
+            string jString = jObject.ToString(0, null);
+            string webmapjson = string.Empty;
+
+            // Check the length of the call - uri escape funtion has a max length of 65520 characters
+            if (jString.Length > 32766)
+            {
+                List<string> segments = new List<string>();
+                for (int index = 0; index < jString.Length; index += 32766)
+                {
+                    segments.Add(jString.Substring(index, Math.Min(32766, jString.Length - index)));
                 }
 
-                // Reconstruct the request as a string
-                var sb = new StringBuilder();
+                foreach (var segment in segments)
+                {
+                    webmapjson += Uri.EscapeDataString(segment);
+                }
+            }
+            else
+            {
+                webmapjson = Uri.EscapeDataString(jString);
+            }
+
+            // Reconstruct the request as a string
+            var sb = new StringBuilder();
+            if (context.Request.HttpMethod == "POST")
+            {
                 foreach (var param in context.Request.Form)
                 {
                     if (param.ToString() == "Web_Map_as_JSON")
@@ -466,11 +468,25 @@ public class proxy : IHttpHandler {
                         sb.Append(param.ToString() + "=" + context.Request.Form[param.ToString()].ToString() + "&");
                     }
                 }
-                sb.Length = sb.Length - 1;
-
-                postBody = Encoding.UTF8.GetBytes(sb.ToString());
-                post = System.Text.Encoding.UTF8.GetString(postBody);
             }
+            else if (context.Request.HttpMethod == "GET")
+            {
+                foreach (var param in context.Request.Params)
+                {
+                    if (param.ToString() == "Web_Map_as_JSON")
+                    {
+                        sb.Append("Web_Map_as_JSON=" + webmapjson + "&");
+                    }
+                    else
+                    {
+                        sb.Append(param.ToString() + "=" + context.Request.Params[param.ToString()].ToString() + "&");
+                    }
+                }
+            }
+            sb.Length = sb.Length - 1;
+
+            postBody = Encoding.UTF8.GetBytes(sb.ToString());
+            post = System.Text.Encoding.UTF8.GetString(postBody);
         }
 
         //forwarding original request
@@ -552,9 +568,14 @@ public class proxy : IHttpHandler {
         get { return true; }
     }
 
-/**
-* Private
+    /**
+    * Private
 */
+
+    private string GetFormOrParamVariable(HttpRequest request, string name)
+    {
+        return (request.Form["Web_Map_as_JSON"] != null) ? request.Form["Web_Map_as_JSON"] : request.Params["Web_Map_as_JSON"];
+    }
 
     // Substitute map services
     private SubstituteUrl getSubstituteFromConfig(string uri)
@@ -1132,8 +1153,8 @@ public class proxy : IHttpHandler {
         }
     }
 
-/**
-* Static
+    /**
+    * Static
 */
     private static ProxyConfig getConfig() {
         ProxyConfig config = ProxyConfig.GetCurrentConfig();
