@@ -302,8 +302,8 @@ public class proxy : IHttpHandler {
             if (visibleLayersText != null && visibleLayersText.Length > 0 && tiledLayersText != null && tiledLayersText.Length > 0)
             {
                 // Data is delivered slightly differently between GET and POST requests
-                JArray tiledLayers = (context.Request.HttpMethod == "GET") ? (JArray)JObject.Parse(tiledLayersText)["operationalLayers"] : JArray.Parse(tiledLayersText);
-                JArray visibleLayers = (context.Request.HttpMethod == "GET") ? (JArray)JObject.Parse(visibleLayersText)["operationalLayers"] : JArray.Parse(visibleLayersText);
+                JArray tiledLayers = (JArray)JObject.Parse(tiledLayersText)["operationalLayers"];
+                JArray visibleLayers = (JArray)JObject.Parse(visibleLayersText)["operationalLayers"];
 
                 foreach (var vlayer in visibleLayers)
                 {
