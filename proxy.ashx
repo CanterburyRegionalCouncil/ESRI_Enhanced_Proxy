@@ -746,7 +746,7 @@ public class proxy : IHttpHandler {
                 // Text response
                 if (serverResponse.ContentType.Contains("text") ||
                     serverResponse.ContentType.Contains("json") ||
-                    serverResponse.ContentType.Contains("xml")) {
+                    (serverResponse.ContentType.Contains("xml") && !serverResponse.ContentType.Contains("officedocument"))) {
                     using (StreamReader sr = new StreamReader(byteStream)) {
                         string strResponse = sr.ReadToEnd();
                         if (
